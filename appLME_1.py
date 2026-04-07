@@ -10,7 +10,7 @@ REQUIREMENTS (requirements.txt):
   gspread
   google-auth
   plotly
-  kaleido
+  matplotlib
   python-pptx
   openpyxl
 
@@ -37,6 +37,11 @@ from datetime import datetime
 import gspread
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # headless — no display needed
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.patches import FancyBboxPatch
 import plotly.graph_objects as go
 import streamlit as st
 from google.oauth2.service_account import Credentials
@@ -738,6 +743,169 @@ def _kpi_dict(monthly):
         "s3": f"{a} {abs(pct):.1f}%",
     }
 
+# ─────────────────────────────────────────────
+# MATPLOTLIB CHART → PNG  (no Chrome / kaleido)
+# ─────────────────────────────────────────────
+def _hex_to_rgb01(h: str):
+    """Convert '#RRGGBB' → (r, g, b) floats 0-1."""
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) / 255 for i in (0, 2, 4))
+
+
+def _mpl_monthly_png(monthly: pd.DataFrame, forecast: pd.DataFrame,
+                     metal: str, color: str) -> bytes:
+    """Dark-themed monthly line chart rendered by matplotlib — returns PNG bytes."""
+    BG   = "#0D1117"
+    CARD = "#161B22"
+    GRD  = "#21262D"
+    SEC  = "#8B949E"
+    PRI  = "#E6EDF3"
+    G    = "#00C853"
+    R    = "#FF1744"
+    GOLD_C = "#FFD600"
+
+    fig, ax = plt.subplots(figsize=(9.2, 4.2), facecolor=CARD)
+    ax.set_facecolor(CARD)
+
+    labels = list(monthly["Label"])
+    prices = list(monthly["Price"])
+    x_idx  = list(range(len(labels)))
+
+    # Up / down bar fill
+    prev_prices = [None] + prices[:-1]
+    for i, (p, pp) in enumerate(zip(prices, prev_prices)):
+        clr = (0, 200/255, 83/255, 0.12) if (pp is None or p >= pp) else (1, 23/255, 68/255, 0.12)
+        ax.bar(i, p, color=clr, width=0.75, zorder=1)
+
+    # Main line
+    col_rgb = _hex_to_rgb01(color)
+    ax.plot(x_idx, prices, color=col_rgb, linewidth=2.2, zorder=3)
+
+    # Dots colored by direction
+    for i, (p, pp) in enumerate(zip(prices, prev_prices)):
+        dot_c = G if (pp is None or p >= pp) else R
+        ax.scatter(i, p, color=dot_c, s=28, zorder=4, linewidths=0.8,
+                   edgecolors=CARD)
+
+    # Value labels
+    for i, p in enumerate(prices):
+        ax.text(i, p * 1.002, f"{p:,.0f}", ha="center", va="bottom",
+                fontsize=7, color=SEC)
+
+    # Forecast dotted
+    if len(forecast):
+        fc_labels = list(forecast["Label"])
+        fc_prices = list(forecast["Price"])
+        fc_x = [len(labels) - 1] + list(range(len(labels), len(labels) + len(fc_labels)))
+        fc_y = [prices[-1]] + fc_prices
+        ax.plot(fc_x, fc_y, color=GOLD_C, linewidth=1.5,
+                linestyle="--", zorder=3)
+        for i, (xi, p) in enumerate(zip(fc_x[1:], fc_prices)):
+            ax.scatter(xi, p, color=GOLD_C, marker="D", s=30, zorder=4)
+            ax.text(xi, p * 1.002, f"{p:,.0f}", ha="center", va="bottom",
+                    fontsize=7, color=GOLD_C)
+        all_labels = labels + fc_labels
+    else:
+        all_labels = labels
+
+    ax.set_xticks(range(len(all_labels)))
+    ax.set_xticklabels(all_labels, rotation=35, ha="right",
+                       fontsize=8, color=SEC)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+    ax.tick_params(colors=SEC, labelsize=8)
+    ax.spines[:].set_color(GRD)
+    ax.yaxis.label.set_color(SEC)
+    ax.grid(axis="y", color=GRD, linewidth=0.5, zorder=0)
+    ax.grid(axis="x", visible=False)
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_els = [
+        Line2D([0], [0], color=col_rgb, linewidth=2, label=f"{metal} Monthly Avg"),
+        Line2D([0], [0], color=GOLD_C,  linewidth=1.5, linestyle="--", label="Forecast ▸"),
+    ]
+    ax.legend(handles=legend_els, facecolor=CARD, edgecolor=GRD,
+              labelcolor=SEC, fontsize=8, loc="upper left")
+
+    ax.text(0.0, -0.18, "Source: LME", transform=ax.transAxes,
+            fontsize=7.5, color="#484F58")
+
+    fig.tight_layout(pad=0.8)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, facecolor=CARD, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def _mpl_quarterly_png(quarterly: pd.DataFrame, forecast_q: pd.DataFrame,
+                       metal: str, color: str) -> bytes:
+    """Dark-themed quarterly bar chart rendered by matplotlib — returns PNG bytes."""
+    BG   = "#0D1117"
+    CARD = "#161B22"
+    GRD  = "#21262D"
+    SEC  = "#8B949E"
+    PRI  = "#E6EDF3"
+    G    = "#00C853"
+    R    = "#FF1744"
+    GOLD_C = "#FFD600"
+
+    col_rgb = _hex_to_rgb01(color)
+    fig, ax = plt.subplots(figsize=(9.2, 4.2), facecolor=CARD)
+    ax.set_facecolor(CARD)
+
+    labels = list(quarterly["Label"])
+    prices = list(quarterly["Price"])
+    prev   = [None] + prices[:-1]
+    bar_colors = [G if (pp is None or p >= pp) else R
+                  for p, pp in zip(prices, prev)]
+    x_idx = list(range(len(labels)))
+
+    bars = ax.bar(x_idx, prices, color=bar_colors, alpha=0.85,
+                  width=0.55, zorder=2)
+
+    for i, p in enumerate(prices):
+        ax.text(i, p * 1.003, f"{p:,.0f}", ha="center", va="bottom",
+                fontsize=8.5, color=PRI)
+
+    if len(forecast_q):
+        fc_labels = list(forecast_q["Label"])
+        fc_prices = list(forecast_q["Price"])
+        fc_x = list(range(len(labels), len(labels) + len(fc_labels)))
+        ax.bar(fc_x, fc_prices, color=GOLD_C, alpha=0.5,
+               width=0.55, zorder=2, hatch="//", edgecolor=GOLD_C)
+        for xi, p in zip(fc_x, fc_prices):
+            ax.text(xi, p * 1.003, f"{p:,.0f}", ha="center", va="bottom",
+                    fontsize=8.5, color=GOLD_C)
+        all_labels = labels + fc_labels
+        all_x      = x_idx + fc_x
+    else:
+        all_labels = labels
+        all_x      = x_idx
+
+    ax.set_xticks(all_x)
+    ax.set_xticklabels(all_labels, rotation=20, ha="right",
+                       fontsize=8, color=SEC)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+    ax.tick_params(colors=SEC, labelsize=8)
+    ax.spines[:].set_color(GRD)
+    ax.grid(axis="y", color=GRD, linewidth=0.5, zorder=0)
+    ax.grid(axis="x", visible=False)
+
+    ax.text(0.0, -0.18, "Source: LME", transform=ax.transAxes,
+            fontsize=7.5, color="#484F58")
+
+    fig.tight_layout(pad=0.8)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, facecolor=CARD, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─────────────────────────────────────────────
+# PPTX BUILDER
+# ─────────────────────────────────────────────
 def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
                al_m, al_q, al_fm, al_fq, sel_months) -> bytes:
     def _filter(df):
@@ -745,12 +913,12 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
         return r if not r.empty else df.tail(10)
     def _filter_q(df, mf):
         if mf.empty: return df.tail(4)
-        s,e = mf["Date"].min(), mf["Date"].max()
-        r   = df[(df["Date"]>=s)&(df["Date"]<=e)]
+        s, e = mf["Date"].min(), mf["Date"].max()
+        r    = df[(df["Date"] >= s) & (df["Date"] <= e)]
         return r if not r.empty else df.tail(4)
 
-    cu_mf = _filter(cu_m); al_mf = _filter(al_m)
-    cu_qf = _filter_q(cu_q, cu_mf); al_qf = _filter_q(al_q, al_mf)
+    cu_mf  = _filter(cu_m);  al_mf  = _filter(al_m)
+    cu_qf  = _filter_q(cu_q, cu_mf); al_qf  = _filter_q(al_q, al_mf)
     cu_fcm = cu_fm[cu_fm["Label"].isin(sel_months)] if len(cu_fm) else cu_fm
     al_fcm = al_fm[al_fm["Label"].isin(sel_months)] if len(al_fm) else al_fm
 
@@ -758,24 +926,21 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
     prs.slide_width  = Inches(10)
     prs.slide_height = Inches(5.625)
 
-    def png(fig): return fig.to_image(format="png", width=920, height=470, scale=2)
-
     # Slide 1 — Cu Monthly
-    f1 = candlestick_monthly(cu_mf, cu_fcm, "Copper (Cu) — Monthly Avg", COPPER_CLR)
     _build_slide(prs,
         "Copper (Cu) — Monthly Average Price",
         f"USD/MT  ·  {cu_mf['Label'].iloc[0]} → {cu_mf['Label'].iloc[-1]}  ·  LME Cash Settlement",
-        png(f1), _kpi_dict(cu_mf), COPPER_CLR)
+        _mpl_monthly_png(cu_mf, cu_fcm, "Copper (Cu)", COPPER_CLR),
+        _kpi_dict(cu_mf), COPPER_CLR)
 
     # Slide 2 — Al Monthly
-    f2 = candlestick_monthly(al_mf, al_fcm, "Aluminium (Al) — Monthly Avg", ALUM_CLR)
     _build_slide(prs,
         "Aluminium (Al) — Monthly Average Price",
         f"USD/MT  ·  {al_mf['Label'].iloc[0]} → {al_mf['Label'].iloc[-1]}  ·  LME Cash Settlement",
-        png(f2), _kpi_dict(al_mf), ALUM_CLR)
+        _mpl_monthly_png(al_mf, al_fcm, "Aluminium (Al)", ALUM_CLR),
+        _kpi_dict(al_mf), ALUM_CLR)
 
     # Slide 3 — Cu Quarterly
-    f3 = quarterly_chart(cu_qf, cu_fq, "Copper (Cu) — Quarterly Avg", COPPER_CLR)
     kp3 = _kpi_dict(cu_mf)
     if len(cu_qf):
         kp3["l1"] = f"LATEST QUARTER ({cu_qf['Label'].iloc[-1]})"
@@ -783,10 +948,10 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
     _build_slide(prs,
         "Copper (Cu) — Quarterly Average Price",
         f"USD/MT  ·  {cu_qf['Label'].iloc[0] if len(cu_qf) else ''} → {cu_qf['Label'].iloc[-1] if len(cu_qf) else ''}",
-        png(f3), kp3, COPPER_CLR)
+        _mpl_quarterly_png(cu_qf, cu_fq, "Copper (Cu)", COPPER_CLR),
+        kp3, COPPER_CLR)
 
     # Slide 4 — Al Quarterly
-    f4 = quarterly_chart(al_qf, al_fq, "Aluminium (Al) — Quarterly Avg", ALUM_CLR)
     kp4 = _kpi_dict(al_mf)
     if len(al_qf):
         kp4["l1"] = f"LATEST QUARTER ({al_qf['Label'].iloc[-1]})"
@@ -794,7 +959,8 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
     _build_slide(prs,
         "Aluminium (Al) — Quarterly Average Price",
         f"USD/MT  ·  {al_qf['Label'].iloc[0] if len(al_qf) else ''} → {al_qf['Label'].iloc[-1] if len(al_qf) else ''}",
-        png(f4), kp4, ALUM_CLR)
+        _mpl_quarterly_png(al_qf, al_fq, "Aluminium (Al)", ALUM_CLR),
+        kp4, ALUM_CLR)
 
     buf = io.BytesIO()
     prs.save(buf)
