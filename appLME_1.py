@@ -348,10 +348,12 @@ def candlestick_monthly(monthly: pd.DataFrame, forecast: pd.DataFrame,
 
     fig = go.Figure()
 
-    # Volume-style background bars
+    # Volume-style background bars  (rgba — Plotly does NOT accept hex+alpha)
+    GREEN_DIM_BAR = "rgba(0,200,83,0.15)"
+    RED_DIM_BAR   = "rgba(255,23,68,0.15)"
     fig.add_trace(go.Bar(
         x=monthly["Label"], y=monthly["Price"],
-        marker_color=[GREEN + "33" if u else RED + "33" for u in monthly["is_up"]],
+        marker_color=[GREEN_DIM_BAR if u else RED_DIM_BAR for u in monthly["is_up"]],
         showlegend=False, hoverinfo="skip",
     ))
 
