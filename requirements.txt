@@ -4,6 +4,7 @@ numpy
 gspread
 google-auth
 plotly
-kaleido
+matplotlib
 python-pptx
 openpyxl
+
