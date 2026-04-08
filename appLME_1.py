@@ -1,4 +1,35 @@
+"""
+LME Metals Trading Dashboard
+==============================
+Stock-market style UI · Google Sheets live feed · 4-slide PPTX export
 
+REQUIREMENTS (requirements.txt):
+  streamlit>=1.32
+  pandas
+  numpy
+  gspread
+  google-auth
+  plotly
+  matplotlib
+  python-pptx
+  openpyxl
+
+SECRETS (.streamlit/secrets.toml on Streamlit Cloud):
+  SPREADSHEET_ID = "1zLyMANY56oFRwFug04WYavGUH_NAlRH8M3c-TXIRDlI"
+
+  [gcp_service_account]
+  type = "service_account"
+  project_id = "lme-dashboard"
+  private_key_id = "..."
+  private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+  client_email = "lme-dashboard-materals@lme-dashboard.iam.gserviceaccount.com"
+  client_id = "..."
+  auth_uri = "https://accounts.google.com/o/oauth2/auth"
+  token_uri = "https://oauth2.googleapis.com/token"
+  auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+  client_x509_cert_url = "..."
+  universe_domain = "googleapis.com"
+"""
 
 import io
 from datetime import datetime
@@ -542,15 +573,17 @@ def chart_live_daily(df_raw: pd.DataFrame, metal: str, color: str) -> go.Figure:
     first_lbl = df["Date"].iloc[0].strftime("%d %b %Y")
     last_lbl  = df["Date"].iloc[-1].strftime("%d %b %Y")
 
+    # Build layout without xaxis/yaxis from _CHART_LAYOUT to avoid duplicate kwarg error
+    _base = {k: v for k, v in _CHART_LAYOUT.items() if k not in ("xaxis", "yaxis")}
     fig.update_layout(
-        **_CHART_LAYOUT,
+        **_base,
         title=dict(
             text=(f"<b>{metal}</b>  "
                   f"<span style='font-size:22px;font-weight:700;color:{clr}'>"
                   f"${cur:,.2f}</span>  "
                   f"<span style='font-size:13px;color:{clr}'>{arrow} ${abs(chg):,.2f}  ({arrow}{abs(pct):.2f}%)</span>"
                   f"<br><span style='font-size:10px;color:{TEXT_SEC}'>"
-                  f"USD/MT  ·  {first_lbl} → {last_lbl}  ·  LME Cash Settlement</span>"),
+                  f"USD/MT  ·  {first_lbl} \u2192 {last_lbl}  ·  LME Cash Settlement</span>"),
             font=dict(size=15, color=TEXT_PRI),
         ),
         xaxis=dict(
