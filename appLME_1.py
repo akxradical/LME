@@ -623,31 +623,205 @@ def render_monthly_table(monthly: pd.DataFrame, color: str):
 # TOP TICKER BAR
 # ─────────────────────────────────────────────
 def render_ticker_bar(cu_m: pd.DataFrame, al_m: pd.DataFrame):
-    def _item(label, monthly, color):
+    def _stats(monthly):
         cur  = monthly["Price"].iloc[-1]
         prev = monthly["Price"].iloc[-2] if len(monthly) > 1 else cur
         chg  = cur - prev
         pct  = chg / prev * 100 if prev else 0
-        cls  = "ticker-chg-up" if chg >= 0 else "ticker-chg-dn"
-        arrow= "▲" if chg >= 0 else "▼"
-        return f"""
-        <div class="ticker-item">
-          <span class="ticker-name">{label}</span>
-          <span class="ticker-price" style="color:{color}">${cur:,.2f}</span>
-          <span class="{cls}">{arrow} {abs(pct):.2f}%  ${abs(chg):,.0f}</span>
-        </div>"""
+        return cur, chg, pct
 
-    now = datetime.now().strftime("%d %b %Y  %H:%M")
+    cu_cur,  cu_chg,  cu_pct  = _stats(cu_m)
+    al_cur,  al_chg,  al_pct  = _stats(al_m)
+    cu_arrow = "▲" if cu_chg >= 0 else "▼"
+    al_arrow = "▲" if al_chg >= 0 else "▼"
+    cu_color = "#00C853" if cu_chg >= 0 else "#FF1744"
+    al_color = "#00C853" if al_chg >= 0 else "#FF1744"
+    now      = datetime.now().strftime("%d %b %Y  %H:%M")
+
     st.markdown(f"""
-    <div class="ticker-bar">
-      {_item("LME COPPER  ·  USD/MT", cu_m, COPPER_CLR)}
-      {_item("LME ALUMINIUM  ·  USD/MT", al_m, ALUM_CLR)}
-      <div class="ticker-item" style="margin-left:auto">
-        <span class="ticker-name">LAST REFRESH</span>
-        <span style="color:{TEXT_SEC};font-size:12px">{now}</span>
-        <span style="color:{TEXT_MUT};font-size:10px">auto‑refresh 5 min</span>
+    <style>
+    .lme-header {{
+        background: #0A0F1E;
+        border-bottom: 2px solid #B87333;
+        padding: 0;
+        margin-bottom: 0;
+    }}
+    .lme-topbar {{
+        background: #050A14;
+        padding: 6px 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #1C2333;
+    }}
+    .lme-logo {{
+        font-size: 22px;
+        font-weight: 900;
+        letter-spacing: 3px;
+        color: #FFFFFF;
+        font-family: 'Arial Black', Arial, sans-serif;
+    }}
+    .lme-logo span {{
+        color: #B87333;
+    }}
+    .lme-subtitle {{
+        font-size: 9px;
+        color: #8B949E;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin-top: 1px;
+    }}
+    .lme-pricebar {{
+        background: #0A0F1E;
+        padding: 14px 28px;
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        border-bottom: 1px solid #1C2333;
+    }}
+    .lme-price-block {{
+        display: flex;
+        flex-direction: column;
+        padding: 8px 32px 8px 0;
+        margin-right: 32px;
+        border-right: 1px solid #1C2333;
+        min-width: 200px;
+    }}
+    .lme-price-block:last-of-type {{
+        border-right: none;
+    }}
+    .lme-metal-name {{
+        font-size: 10px;
+        letter-spacing: 1.5px;
+        color: #8B949E;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+        font-family: Arial, sans-serif;
+    }}
+    .lme-price-row {{
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+    }}
+    .lme-price-val {{
+        font-size: 26px;
+        font-weight: 700;
+        color: #E6EDF3;
+        letter-spacing: -0.5px;
+        font-family: Arial, sans-serif;
+    }}
+    .lme-price-unit {{
+        font-size: 11px;
+        color: #484F58;
+        font-family: Arial, sans-serif;
+    }}
+    .lme-change-row {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 3px;
+    }}
+    .lme-chg-badge {{
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-family: Arial, sans-serif;
+    }}
+    .lme-chg-up {{ background: rgba(0,200,83,0.15); color: #00C853; }}
+    .lme-chg-dn {{ background: rgba(255,23,68,0.15);  color: #FF1744; }}
+    .lme-chg-abs {{
+        font-size: 11px;
+        color: #8B949E;
+        font-family: Arial, sans-serif;
+    }}
+    .lme-refresh-block {{
+        margin-left: auto;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding-left: 28px;
+        border-left: 1px solid #1C2333;
+    }}
+    .lme-refresh-label {{
+        font-size: 9px;
+        color: #484F58;
+        letter-spacing: 1.5px;
+        text-transform: uppercase;
+    }}
+    .lme-refresh-time {{
+        font-size: 13px;
+        color: #8B949E;
+        font-family: Arial, sans-serif;
+        margin-top: 2px;
+    }}
+    .lme-live-dot {{
+        display: inline-block;
+        width: 7px; height: 7px;
+        background: #00C853;
+        border-radius: 50%;
+        margin-right: 5px;
+        animation: pulse 2s infinite;
+        vertical-align: middle;
+    }}
+    @keyframes pulse {{
+        0%,100% {{ opacity:1; }}
+        50%      {{ opacity:0.3; }}
+    }}
+    </style>
+
+    <div class="lme-header">
+      <div class="lme-topbar">
+        <div>
+          <div class="lme-logo">LME<span>.</span></div>
+          <div class="lme-subtitle">London Metal Exchange · Metals Terminal</div>
+        </div>
+        <div style="font-size:10px;color:#484F58;letter-spacing:1px">
+          CASH SETTLEMENT PRICES · USD / METRIC TONNE
+        </div>
+      </div>
+
+      <div class="lme-pricebar">
+        <div class="lme-price-block">
+          <div class="lme-metal-name">&#9632; Copper (Cu)</div>
+          <div class="lme-price-row">
+            <span class="lme-price-val">${cu_cur:,.2f}</span>
+            <span class="lme-price-unit">USD/MT</span>
+          </div>
+          <div class="lme-change-row">
+            <span class="lme-chg-badge {'lme-chg-up' if cu_chg >= 0 else 'lme-chg-dn'}">
+              {cu_arrow} {abs(cu_pct):.2f}%
+            </span>
+            <span class="lme-chg-abs">{cu_arrow} ${abs(cu_chg):,.2f} MoM</span>
+          </div>
+        </div>
+
+        <div class="lme-price-block">
+          <div class="lme-metal-name">&#9632; Aluminium (Al)</div>
+          <div class="lme-price-row">
+            <span class="lme-price-val">${al_cur:,.2f}</span>
+            <span class="lme-price-unit">USD/MT</span>
+          </div>
+          <div class="lme-change-row">
+            <span class="lme-chg-badge {'lme-chg-up' if al_chg >= 0 else 'lme-chg-dn'}">
+              {al_arrow} {abs(al_pct):.2f}%
+            </span>
+            <span class="lme-chg-abs">{al_arrow} ${abs(al_chg):,.2f} MoM</span>
+          </div>
+        </div>
+
+        <div class="lme-refresh-block">
+          <span class="lme-refresh-label">
+            <span class="lme-live-dot"></span>Live Feed
+          </span>
+          <span class="lme-refresh-time">{now}</span>
+          <span style="font-size:9px;color:#484F58;margin-top:2px">
+            Auto-refresh every 5 min
+          </span>
+        </div>
       </div>
     </div>
+    <br>
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
@@ -990,13 +1164,23 @@ def main():
     # ── sidebar ───────────────────────────────
     with st.sidebar:
         st.markdown(f"""
-        <div style="padding:10px 0 16px">
-          <div style="font-size:18px;font-weight:700;color:{TEXT_PRI};
-                      letter-spacing:1px">📊 LME TERMINAL</div>
-          <div style="font-size:10px;color:{TEXT_SEC};letter-spacing:2px;
-                      margin-top:3px">METALS DASHBOARD</div>
+        <div style="padding:12px 0 14px">
+          <div style="font-size:26px;font-weight:900;color:#FFFFFF;
+                      letter-spacing:3px;font-family:'Arial Black',Arial,sans-serif;
+                      line-height:1">
+            LME<span style="color:#B87333">.</span>
+          </div>
+          <div style="font-size:9px;color:{TEXT_SEC};letter-spacing:2px;
+                      text-transform:uppercase;margin-top:4px">
+            London Metal Exchange
+          </div>
+          <div style="font-size:9px;color:{TEXT_MUT};letter-spacing:1.5px;
+                      text-transform:uppercase;margin-top:2px">
+            Metals Price Terminal
+          </div>
         </div>
-        <div style="border-bottom:1px solid {BORDER};margin-bottom:16px"></div>
+        <div style="height:2px;background:linear-gradient(90deg,#B87333,transparent);
+                    margin-bottom:16px;border-radius:1px"></div>
         """, unsafe_allow_html=True)
 
         st.markdown(f'<div style="font-size:10px;color:{TEXT_SEC};'
