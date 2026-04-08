@@ -1,35 +1,4 @@
-"""
-LME Metals Trading Dashboard
-==============================
-Stock-market style UI · Google Sheets live feed · 4-slide PPTX export
 
-REQUIREMENTS (requirements.txt):
-  streamlit>=1.32
-  pandas
-  numpy
-  gspread
-  google-auth
-  plotly
-  matplotlib
-  python-pptx
-  openpyxl
-
-SECRETS (.streamlit/secrets.toml on Streamlit Cloud):
-  SPREADSHEET_ID = "1zLyMANY56oFRwFug04WYavGUH_NAlRH8M3c-TXIRDlI"
-
-  [gcp_service_account]
-  type = "service_account"
-  project_id = "lme-dashboard"
-  private_key_id = "..."
-  private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-  client_email = "lme-dashboard-materals@lme-dashboard.iam.gserviceaccount.com"
-  client_id = "..."
-  auth_uri = "https://accounts.google.com/o/oauth2/auth"
-  token_uri = "https://oauth2.googleapis.com/token"
-  auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-  client_x509_cert_url = "..."
-  universe_domain = "googleapis.com"
-"""
 
 import io
 from datetime import datetime
@@ -715,107 +684,71 @@ def render_ticker_bar(cu_m: pd.DataFrame, al_m: pd.DataFrame):
     cu_cur, cu_chg, cu_pct = _stats(cu_m)
     al_cur, al_chg, al_pct = _stats(al_m)
 
-    # Pre-compute ALL dynamic values as plain strings — no ternary inside HTML
-    cu_arrow     = "▲" if cu_chg >= 0 else "▼"
-    al_arrow     = "▲" if al_chg >= 0 else "▼"
-    cu_badge     = "lme-chg-up" if cu_chg >= 0 else "lme-chg-dn"
-    al_badge     = "lme-chg-up" if al_chg >= 0 else "lme-chg-dn"
-    cu_price_s   = f"${cu_cur:,.2f}"
-    al_price_s   = f"${al_cur:,.2f}"
-    cu_pct_s     = f"{cu_arrow} {abs(cu_pct):.2f}%"
-    al_pct_s     = f"{al_arrow} {abs(al_pct):.2f}%"
-    cu_abs_s     = f"{cu_arrow} ${abs(cu_chg):,.2f} MoM"
-    al_abs_s     = f"{al_arrow} ${abs(al_chg):,.2f} MoM"
-    now          = datetime.now().strftime("%d %b %Y  %H:%M")
+    cu_badge   = 'lme-cup' if cu_chg >= 0 else 'lme-cdn'
+    al_badge   = 'lme-cup' if al_chg >= 0 else 'lme-cdn'
+    cu_arr     = '&#9650;' if cu_chg >= 0 else '&#9660;'
+    al_arr     = '&#9650;' if al_chg >= 0 else '&#9660;'
+    cu_price_s = '${:,.2f}'.format(cu_cur)
+    al_price_s = '${:,.2f}'.format(al_cur)
+    cu_pct_s   = '{} {:.2f}%'.format(cu_arr, abs(cu_pct))
+    al_pct_s   = '{} {:.2f}%'.format(al_arr, abs(al_pct))
+    cu_abs_s   = '{} ${:,.2f} MoM'.format(cu_arr, abs(cu_chg))
+    al_abs_s   = '{} ${:,.2f} MoM'.format(al_arr, abs(al_chg))
+    now        = datetime.now().strftime('%d %b %Y  %H:%M')
 
-    # Build HTML using % formatting so there are zero f-string ternary pitfalls
-    html = """
-<style>
-.lme-header{background:#0A0F1E;border-bottom:2px solid #B87333;margin-bottom:0}
-.lme-topbar{background:#050A14;padding:7px 24px;display:flex;align-items:center;
-            justify-content:space-between;border-bottom:1px solid #1C2333}
-.lme-logo{font-size:22px;font-weight:900;letter-spacing:3px;color:#FFF;
-          font-family:'Arial Black',Arial,sans-serif}
-.lme-logo-dot{color:#B87333}
-.lme-subtitle{font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;margin-top:1px}
-.lme-pricebar{background:#0A0F1E;padding:14px 28px;display:flex;
-              align-items:stretch;border-bottom:1px solid #1C2333;gap:0}
-.lme-pb{display:flex;flex-direction:column;padding:8px 36px 8px 0;
-         margin-right:32px;border-right:1px solid #1C2333;min-width:210px}
-.lme-mname{font-size:10px;letter-spacing:1.5px;color:#8B949E;
-           text-transform:uppercase;margin-bottom:5px;font-family:Arial,sans-serif}
-.lme-prow{display:flex;align-items:baseline;gap:10px}
-.lme-pval{font-size:27px;font-weight:700;color:#E6EDF3;
-          letter-spacing:-0.5px;font-family:Arial,sans-serif}
-.lme-punit{font-size:11px;color:#484F58;font-family:Arial,sans-serif}
-.lme-crow{display:flex;align-items:center;gap:8px;margin-top:4px}
-.lme-badge{font-size:12px;font-weight:600;padding:2px 9px;
-           border-radius:3px;font-family:Arial,sans-serif}
-.lme-cup{background:rgba(0,200,83,0.15);color:#00C853}
-.lme-cdn{background:rgba(255,23,68,0.15);color:#FF1744}
-.lme-abs{font-size:11px;color:#8B949E;font-family:Arial,sans-serif}
-.lme-rfr{margin-left:auto;display:flex;flex-direction:column;
-          justify-content:center;padding-left:28px;border-left:1px solid #1C2333}
-.lme-dot{display:inline-block;width:7px;height:7px;background:#00C853;
-          border-radius:50%;margin-right:5px;animation:ld 2s infinite;vertical-align:middle}
-@keyframes ld{0%%,100%%{opacity:1}50%%{opacity:0.3}}
-</style>
-<div class="lme-header">
-  <div class="lme-topbar">
-    <div>
-      <div class="lme-logo">LME<span class="lme-logo-dot">.</span></div>
-      <div class="lme-subtitle">London Metal Exchange &middot; Metals Price Terminal</div>
-    </div>
-    <div style="font-size:10px;color:#484F58;letter-spacing:1px">
-      CASH SETTLEMENT PRICES &middot; USD / METRIC TONNE
-    </div>
-  </div>
-  <div class="lme-pricebar">
-
-    <div class="lme-pb">
-      <div class="lme-mname">&#9632; Copper (Cu)</div>
-      <div class="lme-prow">
-        <span class="lme-pval">%(cu_price_s)s</span>
-        <span class="lme-punit">USD/MT</span>
-      </div>
-      <div class="lme-crow">
-        <span class="lme-badge %(cu_badge)s">%(cu_pct_s)s</span>
-        <span class="lme-abs">%(cu_abs_s)s</span>
-      </div>
-    </div>
-
-    <div class="lme-pb">
-      <div class="lme-mname">&#9632; Aluminium (Al)</div>
-      <div class="lme-prow">
-        <span class="lme-pval">%(al_price_s)s</span>
-        <span class="lme-punit">USD/MT</span>
-      </div>
-      <div class="lme-crow">
-        <span class="lme-badge %(al_badge)s">%(al_pct_s)s</span>
-        <span class="lme-abs">%(al_abs_s)s</span>
-      </div>
-    </div>
-
-    <div class="lme-rfr">
-      <span style="font-size:9px;color:#484F58;letter-spacing:1.5px;text-transform:uppercase">
-        <span class="lme-dot"></span>Live Feed
-      </span>
-      <span style="font-size:14px;color:#8B949E;margin-top:3px;font-family:Arial,sans-serif">
-        %(now)s
-      </span>
-      <span style="font-size:9px;color:#484F58;margin-top:2px">Auto-refresh every 5 min</span>
-    </div>
-
-  </div>
-</div><br>
-""" % dict(
-        cu_price_s=cu_price_s, cu_badge=cu_badge,
-        cu_pct_s=cu_pct_s,     cu_abs_s=cu_abs_s,
-        al_price_s=al_price_s, al_badge=al_badge,
-        al_pct_s=al_pct_s,     al_abs_s=al_abs_s,
-        now=now,
+    css = (
+        '<style>'
+        '.lme-wrap{background:#0A0F1E;border-bottom:2px solid #B87333;margin-bottom:12px}'
+        '.lme-top{background:#050A14;padding:7px 24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #1C2333}'
+        '.lme-logo{font-size:22px;font-weight:900;letter-spacing:3px;color:#FFF;font-family:"Arial Black",Arial,sans-serif}'
+        '.lme-dot-o{color:#B87333}'
+        '.lme-sub{font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;margin-top:1px}'
+        '.lme-bar{background:#0A0F1E;padding:14px 28px;display:flex;align-items:stretch;border-bottom:1px solid #1C2333}'
+        '.lme-pb{display:flex;flex-direction:column;padding:8px 36px 8px 0;margin-right:32px;border-right:1px solid #1C2333;min-width:210px}'
+        '.lme-mn{font-size:10px;letter-spacing:1.5px;color:#8B949E;text-transform:uppercase;margin-bottom:5px;font-family:Arial,sans-serif}'
+        '.lme-pr{display:flex;align-items:baseline;gap:10px}'
+        '.lme-pv{font-size:27px;font-weight:700;color:#E6EDF3;letter-spacing:-0.5px;font-family:Arial,sans-serif}'
+        '.lme-pu{font-size:11px;color:#484F58;font-family:Arial,sans-serif}'
+        '.lme-cr{display:flex;align-items:center;gap:8px;margin-top:4px}'
+        '.lme-badge{font-size:12px;font-weight:600;padding:2px 9px;border-radius:3px;font-family:Arial,sans-serif}'
+        '.lme-cup{background:rgba(0,200,83,0.15);color:#00C853}'
+        '.lme-cdn{background:rgba(255,23,68,0.15);color:#FF1744}'
+        '.lme-ab{font-size:11px;color:#8B949E;font-family:Arial,sans-serif}'
+        '.lme-rf{margin-left:auto;display:flex;flex-direction:column;justify-content:center;padding-left:28px;border-left:1px solid #1C2333}'
+        '.lme-live{display:inline-block;width:7px;height:7px;background:#00C853;border-radius:50%;margin-right:5px;vertical-align:middle;animation:ldp 2s infinite}'
+        '@keyframes ldp{0%,100%{opacity:1}50%{opacity:0.3}}'
+        '</style>'
     )
-    st.markdown(html, unsafe_allow_html=True)
+
+    body = (
+        '<div class="lme-wrap">'
+        '<div class="lme-top">'
+        '<div>'
+        '<div class="lme-logo">LME<span class="lme-dot-o">.</span></div>'
+        '<div class="lme-sub">London Metal Exchange &middot; Metals Price Terminal</div>'
+        '</div>'
+        '<div style="font-size:10px;color:#484F58;letter-spacing:1px">CASH SETTLEMENT &middot; USD/MT</div>'
+        '</div>'
+        '<div class="lme-bar">'
+        '<div class="lme-pb">'
+        '<div class="lme-mn">&#9632; Copper (Cu)</div>'
+        '<div class="lme-pr"><span class="lme-pv">' + cu_price_s + '</span><span class="lme-pu">USD/MT</span></div>'
+        '<div class="lme-cr"><span class="lme-badge ' + cu_badge + '">' + cu_pct_s + '</span><span class="lme-ab">' + cu_abs_s + '</span></div>'
+        '</div>'
+        '<div class="lme-pb">'
+        '<div class="lme-mn">&#9632; Aluminium (Al)</div>'
+        '<div class="lme-pr"><span class="lme-pv">' + al_price_s + '</span><span class="lme-pu">USD/MT</span></div>'
+        '<div class="lme-cr"><span class="lme-badge ' + al_badge + '">' + al_pct_s + '</span><span class="lme-ab">' + al_abs_s + '</span></div>'
+        '</div>'
+        '<div class="lme-rf">'
+        '<span style="font-size:9px;color:#484F58;letter-spacing:1.5px;text-transform:uppercase"><span class="lme-live"></span>Live Feed</span>'
+        '<span style="font-size:14px;color:#8B949E;margin-top:3px;font-family:Arial,sans-serif">' + now + '</span>'
+        '<span style="font-size:9px;color:#484F58;margin-top:2px">Auto-refresh every 5 min</span>'
+        '</div>'
+        '</div>'
+        '</div><br>'
+    )
+    st.markdown(css + body, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
