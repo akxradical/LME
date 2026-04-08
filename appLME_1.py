@@ -530,6 +530,88 @@ def rolling_chart(df_raw: pd.DataFrame, metal: str, color: str) -> go.Figure:
     )
     return fig
 
+
+def chart_live_daily(df_raw: pd.DataFrame, metal: str, color: str) -> go.Figure:
+    """Main live chart — shows ALL daily prices like a stock chart (TradingView style)."""
+    df = df_raw.copy().sort_values("Date").reset_index(drop=True)
+    r3 = rolling_avg(df, 3)
+
+    # Compute daily colour: green if price >= prev, red otherwise
+    df["prev"]   = df["Price"].shift(1)
+    df["is_up"]  = df["Price"] >= df["prev"]
+
+    cur   = df["Price"].iloc[-1]
+    prev  = df["Price"].iloc[-2] if len(df) > 1 else cur
+    chg   = cur - prev
+    pct   = chg / prev * 100 if prev else 0
+    arrow = "▲" if chg >= 0 else "▼"
+    clr   = GREEN if chg >= 0 else RED
+    r,g,b = bytes.fromhex(color.lstrip("#"))
+
+    fig = go.Figure()
+
+    # Area fill under daily price
+    fig.add_trace(go.Scatter(
+        x=df["Date"], y=df["Price"],
+        fill="tozeroy",
+        fillcolor=f"rgba({r},{g},{b},0.07)",
+        line=dict(color=color, width=1.5),
+        mode="lines",
+        name="Daily Price",
+        hovertemplate="<b>%{x|%d %b %Y}</b><br>$%{y:,.2f} /MT<extra></extra>",
+    ))
+
+    # 3M moving average overlay
+    fig.add_trace(go.Scatter(
+        x=r3["Date"], y=r3["MA3"],
+        line=dict(color=GOLD, width=1.2, dash="dot"),
+        mode="lines",
+        name="3M Moving Avg",
+        hovertemplate="3M Avg: $%{y:,.2f}<extra></extra>",
+    ))
+
+    first_lbl = df["Date"].iloc[0].strftime("%d %b %Y")
+    last_lbl  = df["Date"].iloc[-1].strftime("%d %b %Y")
+
+    fig.update_layout(
+        **_CHART_LAYOUT,
+        title=dict(
+            text=(f"<b>{metal}</b>  "
+                  f"<span style='font-size:22px;font-weight:700;color:{clr}'>"
+                  f"${cur:,.2f}</span>  "
+                  f"<span style='font-size:13px;color:{clr}'>{arrow} ${abs(chg):,.2f}  ({arrow}{abs(pct):.2f}%)</span>"
+                  f"<br><span style='font-size:10px;color:{TEXT_SEC}'>"
+                  f"USD/MT  ·  {first_lbl} → {last_lbl}  ·  LME Cash Settlement</span>"),
+            font=dict(size=15, color=TEXT_PRI),
+        ),
+        xaxis=dict(
+            showgrid=False, zeroline=False,
+            color=TEXT_SEC, linecolor=BORDER, tickcolor=BORDER,
+            rangeslider=dict(visible=True, bgcolor=BG_DARK, thickness=0.04),
+            rangeselector=dict(
+                bgcolor=BG_CARD2, activecolor=BORDER,
+                font=dict(color=TEXT_SEC, size=10),
+                buttons=[
+                    dict(count=1, label="1M",  step="month", stepmode="backward"),
+                    dict(count=3, label="3M",  step="month", stepmode="backward"),
+                    dict(count=6, label="6M",  step="month", stepmode="backward"),
+                    dict(count=1, label="YTD", step="year",  stepmode="todate"),
+                    dict(step="all", label="ALL"),
+                ],
+            ),
+        ),
+        yaxis=dict(gridcolor=GRID, zeroline=False, color=TEXT_SEC,
+                   linecolor=BORDER, tickformat=",", side="right"),
+        height=420,
+        hovermode="x unified",
+        annotations=[dict(
+            text="Source: LME via Google Sheets",
+            x=0, y=-0.08, xref="paper", yref="paper",
+            showarrow=False, font=dict(size=9, color=TEXT_MUT),
+        )],
+    )
+    return fig
+
 # ─────────────────────────────────────────────
 # KPI CARDS
 # ─────────────────────────────────────────────
@@ -623,206 +705,118 @@ def render_monthly_table(monthly: pd.DataFrame, color: str):
 # TOP TICKER BAR
 # ─────────────────────────────────────────────
 def render_ticker_bar(cu_m: pd.DataFrame, al_m: pd.DataFrame):
-    def _stats(monthly):
-        cur  = monthly["Price"].iloc[-1]
-        prev = monthly["Price"].iloc[-2] if len(monthly) > 1 else cur
+    def _stats(df):
+        cur  = df["Price"].iloc[-1]
+        prev = df["Price"].iloc[-2] if len(df) > 1 else cur
         chg  = cur - prev
         pct  = chg / prev * 100 if prev else 0
         return cur, chg, pct
 
-    cu_cur,  cu_chg,  cu_pct  = _stats(cu_m)
-    al_cur,  al_chg,  al_pct  = _stats(al_m)
-    cu_arrow = "▲" if cu_chg >= 0 else "▼"
-    al_arrow = "▲" if al_chg >= 0 else "▼"
-    cu_color = "#00C853" if cu_chg >= 0 else "#FF1744"
-    al_color = "#00C853" if al_chg >= 0 else "#FF1744"
-    now      = datetime.now().strftime("%d %b %Y  %H:%M")
+    cu_cur, cu_chg, cu_pct = _stats(cu_m)
+    al_cur, al_chg, al_pct = _stats(al_m)
 
-    st.markdown(f"""
-    <style>
-    .lme-header {{
-        background: #0A0F1E;
-        border-bottom: 2px solid #B87333;
-        padding: 0;
-        margin-bottom: 0;
-    }}
-    .lme-topbar {{
-        background: #050A14;
-        padding: 6px 24px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid #1C2333;
-    }}
-    .lme-logo {{
-        font-size: 22px;
-        font-weight: 900;
-        letter-spacing: 3px;
-        color: #FFFFFF;
-        font-family: 'Arial Black', Arial, sans-serif;
-    }}
-    .lme-logo span {{
-        color: #B87333;
-    }}
-    .lme-subtitle {{
-        font-size: 9px;
-        color: #8B949E;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        margin-top: 1px;
-    }}
-    .lme-pricebar {{
-        background: #0A0F1E;
-        padding: 14px 28px;
-        display: flex;
-        align-items: stretch;
-        gap: 0;
-        border-bottom: 1px solid #1C2333;
-    }}
-    .lme-price-block {{
-        display: flex;
-        flex-direction: column;
-        padding: 8px 32px 8px 0;
-        margin-right: 32px;
-        border-right: 1px solid #1C2333;
-        min-width: 200px;
-    }}
-    .lme-price-block:last-of-type {{
-        border-right: none;
-    }}
-    .lme-metal-name {{
-        font-size: 10px;
-        letter-spacing: 1.5px;
-        color: #8B949E;
-        text-transform: uppercase;
-        margin-bottom: 4px;
-        font-family: Arial, sans-serif;
-    }}
-    .lme-price-row {{
-        display: flex;
-        align-items: baseline;
-        gap: 10px;
-    }}
-    .lme-price-val {{
-        font-size: 26px;
-        font-weight: 700;
-        color: #E6EDF3;
-        letter-spacing: -0.5px;
-        font-family: Arial, sans-serif;
-    }}
-    .lme-price-unit {{
-        font-size: 11px;
-        color: #484F58;
-        font-family: Arial, sans-serif;
-    }}
-    .lme-change-row {{
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 3px;
-    }}
-    .lme-chg-badge {{
-        font-size: 12px;
-        font-weight: 600;
-        padding: 2px 8px;
-        border-radius: 3px;
-        font-family: Arial, sans-serif;
-    }}
-    .lme-chg-up {{ background: rgba(0,200,83,0.15); color: #00C853; }}
-    .lme-chg-dn {{ background: rgba(255,23,68,0.15);  color: #FF1744; }}
-    .lme-chg-abs {{
-        font-size: 11px;
-        color: #8B949E;
-        font-family: Arial, sans-serif;
-    }}
-    .lme-refresh-block {{
-        margin-left: auto;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        padding-left: 28px;
-        border-left: 1px solid #1C2333;
-    }}
-    .lme-refresh-label {{
-        font-size: 9px;
-        color: #484F58;
-        letter-spacing: 1.5px;
-        text-transform: uppercase;
-    }}
-    .lme-refresh-time {{
-        font-size: 13px;
-        color: #8B949E;
-        font-family: Arial, sans-serif;
-        margin-top: 2px;
-    }}
-    .lme-live-dot {{
-        display: inline-block;
-        width: 7px; height: 7px;
-        background: #00C853;
-        border-radius: 50%;
-        margin-right: 5px;
-        animation: pulse 2s infinite;
-        vertical-align: middle;
-    }}
-    @keyframes pulse {{
-        0%,100% {{ opacity:1; }}
-        50%      {{ opacity:0.3; }}
-    }}
-    </style>
+    # Pre-compute ALL dynamic values as plain strings — no ternary inside HTML
+    cu_arrow     = "▲" if cu_chg >= 0 else "▼"
+    al_arrow     = "▲" if al_chg >= 0 else "▼"
+    cu_badge     = "lme-chg-up" if cu_chg >= 0 else "lme-chg-dn"
+    al_badge     = "lme-chg-up" if al_chg >= 0 else "lme-chg-dn"
+    cu_price_s   = f"${cu_cur:,.2f}"
+    al_price_s   = f"${al_cur:,.2f}"
+    cu_pct_s     = f"{cu_arrow} {abs(cu_pct):.2f}%"
+    al_pct_s     = f"{al_arrow} {abs(al_pct):.2f}%"
+    cu_abs_s     = f"{cu_arrow} ${abs(cu_chg):,.2f} MoM"
+    al_abs_s     = f"{al_arrow} ${abs(al_chg):,.2f} MoM"
+    now          = datetime.now().strftime("%d %b %Y  %H:%M")
 
-    <div class="lme-header">
-      <div class="lme-topbar">
-        <div>
-          <div class="lme-logo">LME<span>.</span></div>
-          <div class="lme-subtitle">London Metal Exchange · Metals Terminal</div>
-        </div>
-        <div style="font-size:10px;color:#484F58;letter-spacing:1px">
-          CASH SETTLEMENT PRICES · USD / METRIC TONNE
-        </div>
+    # Build HTML using % formatting so there are zero f-string ternary pitfalls
+    html = """
+<style>
+.lme-header{background:#0A0F1E;border-bottom:2px solid #B87333;margin-bottom:0}
+.lme-topbar{background:#050A14;padding:7px 24px;display:flex;align-items:center;
+            justify-content:space-between;border-bottom:1px solid #1C2333}
+.lme-logo{font-size:22px;font-weight:900;letter-spacing:3px;color:#FFF;
+          font-family:'Arial Black',Arial,sans-serif}
+.lme-logo-dot{color:#B87333}
+.lme-subtitle{font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;margin-top:1px}
+.lme-pricebar{background:#0A0F1E;padding:14px 28px;display:flex;
+              align-items:stretch;border-bottom:1px solid #1C2333;gap:0}
+.lme-pb{display:flex;flex-direction:column;padding:8px 36px 8px 0;
+         margin-right:32px;border-right:1px solid #1C2333;min-width:210px}
+.lme-mname{font-size:10px;letter-spacing:1.5px;color:#8B949E;
+           text-transform:uppercase;margin-bottom:5px;font-family:Arial,sans-serif}
+.lme-prow{display:flex;align-items:baseline;gap:10px}
+.lme-pval{font-size:27px;font-weight:700;color:#E6EDF3;
+          letter-spacing:-0.5px;font-family:Arial,sans-serif}
+.lme-punit{font-size:11px;color:#484F58;font-family:Arial,sans-serif}
+.lme-crow{display:flex;align-items:center;gap:8px;margin-top:4px}
+.lme-badge{font-size:12px;font-weight:600;padding:2px 9px;
+           border-radius:3px;font-family:Arial,sans-serif}
+.lme-cup{background:rgba(0,200,83,0.15);color:#00C853}
+.lme-cdn{background:rgba(255,23,68,0.15);color:#FF1744}
+.lme-abs{font-size:11px;color:#8B949E;font-family:Arial,sans-serif}
+.lme-rfr{margin-left:auto;display:flex;flex-direction:column;
+          justify-content:center;padding-left:28px;border-left:1px solid #1C2333}
+.lme-dot{display:inline-block;width:7px;height:7px;background:#00C853;
+          border-radius:50%;margin-right:5px;animation:ld 2s infinite;vertical-align:middle}
+@keyframes ld{0%%,100%%{opacity:1}50%%{opacity:0.3}}
+</style>
+<div class="lme-header">
+  <div class="lme-topbar">
+    <div>
+      <div class="lme-logo">LME<span class="lme-logo-dot">.</span></div>
+      <div class="lme-subtitle">London Metal Exchange &middot; Metals Price Terminal</div>
+    </div>
+    <div style="font-size:10px;color:#484F58;letter-spacing:1px">
+      CASH SETTLEMENT PRICES &middot; USD / METRIC TONNE
+    </div>
+  </div>
+  <div class="lme-pricebar">
+
+    <div class="lme-pb">
+      <div class="lme-mname">&#9632; Copper (Cu)</div>
+      <div class="lme-prow">
+        <span class="lme-pval">%(cu_price_s)s</span>
+        <span class="lme-punit">USD/MT</span>
       </div>
-
-      <div class="lme-pricebar">
-        <div class="lme-price-block">
-          <div class="lme-metal-name">&#9632; Copper (Cu)</div>
-          <div class="lme-price-row">
-            <span class="lme-price-val">${cu_cur:,.2f}</span>
-            <span class="lme-price-unit">USD/MT</span>
-          </div>
-          <div class="lme-change-row">
-            <span class="lme-chg-badge {'lme-chg-up' if cu_chg >= 0 else 'lme-chg-dn'}">
-              {cu_arrow} {abs(cu_pct):.2f}%
-            </span>
-            <span class="lme-chg-abs">{cu_arrow} ${abs(cu_chg):,.2f} MoM</span>
-          </div>
-        </div>
-
-        <div class="lme-price-block">
-          <div class="lme-metal-name">&#9632; Aluminium (Al)</div>
-          <div class="lme-price-row">
-            <span class="lme-price-val">${al_cur:,.2f}</span>
-            <span class="lme-price-unit">USD/MT</span>
-          </div>
-          <div class="lme-change-row">
-            <span class="lme-chg-badge {'lme-chg-up' if al_chg >= 0 else 'lme-chg-dn'}">
-              {al_arrow} {abs(al_pct):.2f}%
-            </span>
-            <span class="lme-chg-abs">{al_arrow} ${abs(al_chg):,.2f} MoM</span>
-          </div>
-        </div>
-
-        <div class="lme-refresh-block">
-          <span class="lme-refresh-label">
-            <span class="lme-live-dot"></span>Live Feed
-          </span>
-          <span class="lme-refresh-time">{now}</span>
-          <span style="font-size:9px;color:#484F58;margin-top:2px">
-            Auto-refresh every 5 min
-          </span>
-        </div>
+      <div class="lme-crow">
+        <span class="lme-badge %(cu_badge)s">%(cu_pct_s)s</span>
+        <span class="lme-abs">%(cu_abs_s)s</span>
       </div>
     </div>
-    <br>
-    """, unsafe_allow_html=True)
+
+    <div class="lme-pb">
+      <div class="lme-mname">&#9632; Aluminium (Al)</div>
+      <div class="lme-prow">
+        <span class="lme-pval">%(al_price_s)s</span>
+        <span class="lme-punit">USD/MT</span>
+      </div>
+      <div class="lme-crow">
+        <span class="lme-badge %(al_badge)s">%(al_pct_s)s</span>
+        <span class="lme-abs">%(al_abs_s)s</span>
+      </div>
+    </div>
+
+    <div class="lme-rfr">
+      <span style="font-size:9px;color:#484F58;letter-spacing:1.5px;text-transform:uppercase">
+        <span class="lme-dot"></span>Live Feed
+      </span>
+      <span style="font-size:14px;color:#8B949E;margin-top:3px;font-family:Arial,sans-serif">
+        %(now)s
+      </span>
+      <span style="font-size:9px;color:#484F58;margin-top:2px">Auto-refresh every 5 min</span>
+    </div>
+
+  </div>
+</div><br>
+""" % dict(
+        cu_price_s=cu_price_s, cu_badge=cu_badge,
+        cu_pct_s=cu_pct_s,     cu_abs_s=cu_abs_s,
+        al_price_s=al_price_s, al_badge=al_badge,
+        al_pct_s=al_pct_s,     al_abs_s=al_abs_s,
+        now=now,
+    )
+    st.markdown(html, unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────
 # PPTX BUILDER
@@ -1104,14 +1098,14 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
     _build_slide(prs,
         "Copper (Cu) — Monthly Average Price",
         f"USD/MT  ·  {cu_mf['Label'].iloc[0]} → {cu_mf['Label'].iloc[-1]}  ·  LME Cash Settlement",
-        _mpl_monthly_png(cu_mf, cu_fcm, "Copper (Cu)", COPPER_CLR),
+        _mpl_monthly_png(cu_mf, pd.DataFrame(columns=["Date","Price","Label"]), "Copper (Cu)", COPPER_CLR),
         _kpi_dict(cu_mf), COPPER_CLR)
 
     # Slide 2 — Al Monthly
     _build_slide(prs,
         "Aluminium (Al) — Monthly Average Price",
         f"USD/MT  ·  {al_mf['Label'].iloc[0]} → {al_mf['Label'].iloc[-1]}  ·  LME Cash Settlement",
-        _mpl_monthly_png(al_mf, al_fcm, "Aluminium (Al)", ALUM_CLR),
+        _mpl_monthly_png(al_mf, pd.DataFrame(columns=["Date","Price","Label"]), "Aluminium (Al)", ALUM_CLR),
         _kpi_dict(al_mf), ALUM_CLR)
 
     # Slide 3 — Cu Quarterly
@@ -1122,7 +1116,7 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
     _build_slide(prs,
         "Copper (Cu) — Quarterly Average Price",
         f"USD/MT  ·  {cu_qf['Label'].iloc[0] if len(cu_qf) else ''} → {cu_qf['Label'].iloc[-1] if len(cu_qf) else ''}",
-        _mpl_quarterly_png(cu_qf, cu_fq, "Copper (Cu)", COPPER_CLR),
+        _mpl_quarterly_png(cu_qf, pd.DataFrame(columns=["Date","Price","Label"]), "Copper (Cu)", COPPER_CLR),
         kp3, COPPER_CLR)
 
     # Slide 4 — Al Quarterly
@@ -1133,7 +1127,7 @@ def build_pptx(cu_m, cu_q, cu_fm, cu_fq,
     _build_slide(prs,
         "Aluminium (Al) — Quarterly Average Price",
         f"USD/MT  ·  {al_qf['Label'].iloc[0] if len(al_qf) else ''} → {al_qf['Label'].iloc[-1] if len(al_qf) else ''}",
-        _mpl_quarterly_png(al_qf, al_fq, "Aluminium (Al)", ALUM_CLR),
+        _mpl_quarterly_png(al_qf, pd.DataFrame(columns=["Date","Price","Label"]), "Aluminium (Al)", ALUM_CLR),
         kp4, ALUM_CLR)
 
     buf = io.BytesIO()
@@ -1254,8 +1248,8 @@ def main():
     with tab_cu:
         c1, c2 = st.columns([3.2, 1])
         with c1:
-            st.plotly_chart(candlestick_monthly(cu_m, cu_fm, "Copper (Cu)", COPPER_CLR),
-                            use_container_width=True, key="cu_bar")
+            st.plotly_chart(chart_live_daily(cu_raw, "Copper (Cu)", COPPER_CLR),
+                            use_container_width=True, key="cu_live")
         with c2:
             render_kpis(cu_m)
 
@@ -1277,8 +1271,8 @@ def main():
     with tab_al:
         a1, a2 = st.columns([3.2, 1])
         with a1:
-            st.plotly_chart(candlestick_monthly(al_m, al_fm, "Aluminium (Al)", ALUM_CLR),
-                            use_container_width=True, key="al_bar")
+            st.plotly_chart(chart_live_daily(al_raw, "Aluminium (Al)", ALUM_CLR),
+                            use_container_width=True, key="al_live")
         with a2:
             render_kpis(al_m)
 
