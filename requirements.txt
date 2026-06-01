@@ -7,4 +7,3 @@ plotly
 matplotlib
 python-pptx
 openpyxl
-
