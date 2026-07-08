@@ -426,7 +426,7 @@ def main():
                     try:
                         d=build_pptx(M,Q,sel)
                         st.download_button("⬇ Download",data=d,file_name=f"Commodities_{datetime.now():%Y%m%d}.pptx",
-                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",use_container_width=True)
+                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",width="stretch")
                     except Exception as e:st.error(str(e))
         inr=get_usd_inr()
         st.markdown('<div style="border-top:1px solid #30363D;margin-top:14px;padding-top:10px;font-size:10px;color:#484F58">'
@@ -442,12 +442,12 @@ def main():
     for i,(key,tab) in enumerate(zip(["cu","al","br","ag"],[tabs[0],tabs[1],tabs[2],tabs[3]])):
         with tab:
             c1,c2=st.columns([3.2,1])
-            with c1:st.plotly_chart(chart_live(raw[key],NAMES[key],CLR[key],UNITS[key]),use_container_width=True,key=key+"_l")
+            with c1:st.plotly_chart(chart_live(raw[key],NAMES[key],CLR[key],UNITS[key]),width="stretch",key=key+"_l")
             with c2:kpis(M[key],UNITS[key])
             st.markdown('<div class="sh">QUARTERLY & ROLLING</div>',unsafe_allow_html=True)
             r1,r2=st.columns(2)
-            with r1:st.plotly_chart(chart_q(Q[key],lfc(Q[key],2),NAMES[key],CLR[key]),use_container_width=True,key=key+"_q")
-            with r2:st.plotly_chart(chart_roll(raw[key],NAMES[key],CLR[key]),use_container_width=True,key=key+"_r")
+            with r1:st.plotly_chart(chart_q(Q[key],lfc(Q[key],2),NAMES[key],CLR[key]),width="stretch",key=key+"_q")
+            with r2:st.plotly_chart(chart_roll(raw[key],NAMES[key],CLR[key]),width="stretch",key=key+"_r")
             st.markdown('<div class="sh" style="margin-top:14px">MONTHLY TABLE</div>',unsafe_allow_html=True)
             tbl(M[key])
 
@@ -476,7 +476,7 @@ def main():
             d=raw[key].copy().sort_values("Date"); d["vol"]=d["Price"].pct_change().rolling(30).std()*100
             fig_v.add_trace(go.Scatter(x=d["Date"],y=d["vol"],line=dict(color=CLR[key],width=1.5),name=NAMES[key],mode="lines"))
         fig_v.update_layout(**_CL,title=dict(text="<b>30-Day Rolling Volatility</b> <span style='color:#8B949E;font-size:11px'>Daily % std dev</span>",font=dict(size=14)),height=300)
-        st.plotly_chart(fig_v,use_container_width=True,key="vol")
+        st.plotly_chart(fig_v,width="stretch",key="vol")
 
         # CORRELATION
         st.markdown('<div class="sh" style="margin-top:12px">📐 CORRELATION MATRIX</div>',unsafe_allow_html=True)
@@ -493,7 +493,7 @@ def main():
             fig_c.update_layout(paper_bgcolor=CARD,plot_bgcolor=CARD,font=dict(color=TX,size=11),
                 margin=dict(l=10,r=10,t=40,b=10),height=320,
                 title=dict(text="<b>Price Correlation</b>",font=dict(size=14,color=TX)))
-            st.plotly_chart(fig_c,use_container_width=True,key="corr")
+            st.plotly_chart(fig_c,width="stretch",key="corr")
 
         # INR LANDED COST
         st.markdown('<div class="sh" style="margin-top:12px">💱 INR LANDED COST</div>',unsafe_allow_html=True)
@@ -518,7 +518,7 @@ def main():
             fig.add_trace(go.Scatter(x=d["Date"],y=d["I"],line=dict(color=CLR[key],width=2),name=NAMES[key]))
         fig.add_hline(y=100,line_dash="dot",line_color=MT,line_width=1)
         fig.update_layout(**_CL,title=dict(text="<b>Indexed Comparison</b>",font=dict(size=15)),height=380)
-        st.plotly_chart(fig,use_container_width=True,key="comp")
+        st.plotly_chart(fig,width="stretch",key="comp")
 
     # DATA
     with tabs[6]:
@@ -527,7 +527,7 @@ def main():
             with col:
                 st.markdown('<div class="sh">'+NAMES[key]+'</div>',unsafe_allow_html=True)
                 dp=raw[key][["Date","Price"]].copy();dp["Date"]=dp["Date"].dt.strftime("%d %b %Y");dp["Price"]=dp["Price"].apply(lambda x:f"${x:,.2f}")
-                st.dataframe(dp,height=400,use_container_width=True,hide_index=True)
+                st.dataframe(dp,height=400,width="stretch",hide_index=True)
 
 if __name__=="__main__":
     main()
