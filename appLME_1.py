@@ -72,13 +72,9 @@ def load(name):
         df["Date"]=pd.to_datetime(df["Date"],dayfirst=True,errors="coerce")
         df["Price"]=pd.to_numeric(df["Price"].astype(str).str.replace(",",""),errors="coerce")
         return df.dropna(subset=["Date","Price"]).sort_values("Date").reset_index(drop=True)
-    except: return _syn(name)
-
-def _syn(n):
-    s={"Copper":42,"Alum":7,"Brent":99,"Silver":13}; b={"Copper":9000,"Alum":2300,"Brent":75,"Silver":30}
-    key=next((k for k in s if k in n),"Brent"); rng=np.random.default_rng(s[key]); base=b[key]
-    d=pd.date_range("2025-01-02",datetime.today(),freq="B"); noise=rng.normal(0,base*0.005,len(d)).cumsum()
-    return pd.DataFrame({"Date":d,"Price":np.clip(base+noise,base*0.8,base*1.3).round(2)})
+    except Exception:
+        # NEVER return fake data — return empty so the app shows an honest "no data" state
+        return pd.DataFrame(columns=["Date","Price"])
 
 @st.cache_data(ttl=3600)
 def get_usd_inr():
@@ -106,6 +102,123 @@ def lfc(m,p=3):
     x=np.arange(len(m));s,i=np.polyfit(x,m["Price"].values,1);last=m["Date"].iloc[-1]
     fd=[last+pd.DateOffset(months=k+1) for k in range(p)];fp=[i+s*(len(m)+k+1) for k in range(p)]
     return pd.DataFrame({"Date":fd,"Price":np.round(fp,2),"Label":[d.strftime("%b-%y") for d in fd]})
+
+# ═══ DATA-DRIVEN INSIGHT ENGINE (no LLM — pure statistics) ═══
+def analyze_price(df, unit="USD/MT"):
+    """Generate quantitative insights from raw price data — works for any commodity."""
+    d = df.copy().sort_values("Date").reset_index(drop=True)
+    if len(d) < 30:
+        return []
+    price = d["Price"]
+    cur = price.iloc[-1]
+
+    # Windows
+    p7   = price.iloc[-7]  if len(d) > 7  else price.iloc[0]
+    p30  = price.iloc[-30] if len(d) > 30 else price.iloc[0]
+    p90  = price.iloc[-90] if len(d) > 90 else price.iloc[0]
+    ytd  = price.iloc[0]
+
+    chg7  = (cur - p7) / p7 * 100
+    chg30 = (cur - p30) / p30 * 100
+    chg90 = (cur - p90) / p90 * 100
+    chg_ytd = (cur - ytd) / ytd * 100
+
+    # Moving averages
+    ma20 = price.rolling(20).mean().iloc[-1]
+    ma50 = price.rolling(50).mean().iloc[-1] if len(d) >= 50 else ma20
+
+    # Volatility (30d annualized-ish)
+    vol30 = price.pct_change().tail(30).std() * 100
+
+    # 52-week / full-period high-low
+    hi = price.max(); lo = price.min()
+    pos_in_range = (cur - lo) / (hi - lo) * 100 if hi > lo else 50
+
+    insights = []
+
+    # 1. TREND direction (based on 30d momentum + MA position)
+    if chg30 > 3 and cur > ma20:
+        trend_txt = f"Prices are in a clear <b style='color:#00C853'>uptrend</b> — up {abs(chg30):.1f}% over 30 days, trading above the 20-day average (${ma20:,.2f}). Momentum favors buyers."
+        tag, tc = "RISING", "#00C853"
+    elif chg30 < -3 and cur < ma20:
+        trend_txt = f"Prices are in a <b style='color:#FF1744'>downtrend</b> — down {abs(chg30):.1f}% over 30 days, trading below the 20-day average (${ma20:,.2f}). Selling pressure dominates."
+        tag, tc = "FALLING", "#FF1744"
+    else:
+        trend_txt = f"Prices are <b style='color:#FFD600'>consolidating</b> — moving {chg30:+.1f}% over 30 days near the 20-day average (${ma20:,.2f}). Market awaiting a catalyst."
+        tag, tc = "STABLE", "#FFD600"
+    insights.append(("Trend", trend_txt, tag, tc))
+
+    # 2. MOMENTUM (short vs medium term)
+    if chg7 > 0 and chg30 > 0:
+        mom = f"Short-term momentum is <b style='color:#00C853'>positive</b>: +{chg7:.1f}% this week reinforces the +{chg30:.1f}% monthly gain. Rally has staying power."
+    elif chg7 < 0 and chg30 > 0:
+        mom = f"Momentum is <b style='color:#FFD600'>cooling</b>: down {abs(chg7):.1f}% this week despite +{chg30:.1f}% for the month — a possible pullback or profit-taking."
+    elif chg7 > 0 and chg30 < 0:
+        mom = f"Early <b style='color:#00C853'>reversal signal</b>: +{chg7:.1f}% this week against a -{abs(chg30):.1f}% monthly decline — downtrend may be bottoming."
+    else:
+        mom = f"Momentum is <b style='color:#FF1744'>weak</b>: down {abs(chg7):.1f}% this week and {abs(chg30):.1f}% this month — sustained selling."
+    insights.append(("Momentum", mom, None, None))
+
+    # 3. VOLATILITY regime
+    if vol30 > 2.5:
+        vtxt = f"<b style='color:#FF1744'>High volatility</b> ({vol30:.1f}% daily swings). Prices are choppy — consider staggered buying to average out risk rather than a single large order."
+    elif vol30 < 1.0:
+        vtxt = f"<b style='color:#00C853'>Low volatility</b> ({vol30:.1f}% daily swings). Calm market — favorable window to lock in forward contracts at predictable prices."
+    else:
+        vtxt = f"<b style='color:#FFD600'>Moderate volatility</b> ({vol30:.1f}% daily swings). Normal market conditions for procurement timing."
+    insights.append(("Volatility", vtxt, None, None))
+
+    # 4. POSITION in range (support/resistance)
+    if pos_in_range > 80:
+        rtxt = f"Trading near <b style='color:#FF1744'>period highs</b> ({pos_in_range:.0f}% of range, ${lo:,.0f}–${hi:,.0f}). Limited upside room; risk of pullback. Not an ideal entry for large buys."
+    elif pos_in_range < 20:
+        rtxt = f"Trading near <b style='color:#00C853'>period lows</b> ({pos_in_range:.0f}% of range, ${lo:,.0f}–${hi:,.0f}). Attractive entry zone if fundamentals support a rebound."
+    else:
+        rtxt = f"Trading in the <b style='color:#FFD600'>mid-range</b> ({pos_in_range:.0f}% of ${lo:,.0f}–${hi:,.0f}). Neither cheap nor expensive versus recent history."
+    insights.append(("Price Position", rtxt, None, None))
+
+    # 5. MA crossover (golden/death cross signal)
+    if len(d) >= 50:
+        if ma20 > ma50 and chg30 > 0:
+            cxt = f"The 20-day average (${ma20:,.2f}) sits above the 50-day (${ma50:,.2f}) — a <b style='color:#00C853'>bullish structure</b> confirming the uptrend."
+        elif ma20 < ma50:
+            cxt = f"The 20-day average (${ma20:,.2f}) sits below the 50-day (${ma50:,.2f}) — a <b style='color:#FF1744'>bearish structure</b>; caution on the medium-term outlook."
+        else:
+            cxt = f"The 20-day (${ma20:,.2f}) and 50-day (${ma50:,.2f}) averages are converging — a <b style='color:#FFD600'>trend change</b> may be forming."
+        insights.append(("Trend Structure", cxt, None, None))
+
+    return insights, {"chg7":chg7,"chg30":chg30,"chg90":chg90,"ytd":chg_ytd,"vol":vol30,"pos":pos_in_range,"tag":tag,"tc":tc}
+
+
+def render_data_insights(df, unit="USD/MT"):
+    """Render the computed insights as CEO-ready cards."""
+    result = analyze_price(df, unit)
+    if not result:
+        st.caption("Not enough data for analysis (need 30+ days).")
+        return
+    insights, stats = result
+
+    # Summary banner
+    st.markdown(
+        '<div style="background:linear-gradient(90deg,'+stats["tc"]+'22,transparent);'
+        'border-left:4px solid '+stats["tc"]+';border-radius:6px;padding:12px 16px;margin-bottom:14px">'
+        '<span style="font-size:11px;font-weight:700;color:'+stats["tc"]+';letter-spacing:1px">● '+stats["tag"]+'</span>'
+        '<div style="font-size:11px;color:#8B949E;margin-top:6px;line-height:1.5">'
+        '7-Day: <b style="color:'+("#00C853" if stats["chg7"]>=0 else "#FF1744")+'">'+f'{stats["chg7"]:+.1f}%</b> &nbsp;·&nbsp; '
+        '30-Day: <b style="color:'+("#00C853" if stats["chg30"]>=0 else "#FF1744")+'">'+f'{stats["chg30"]:+.1f}%</b> &nbsp;·&nbsp; '
+        '90-Day: <b style="color:'+("#00C853" if stats["chg90"]>=0 else "#FF1744")+'">'+f'{stats["chg90"]:+.1f}%</b> &nbsp;·&nbsp; '
+        'YTD: <b style="color:'+("#00C853" if stats["ytd"]>=0 else "#FF1744")+'">'+f'{stats["ytd"]:+.1f}%</b>'
+        '</div></div>',
+        unsafe_allow_html=True)
+
+    # Individual insight cards
+    for item in insights:
+        title, txt = item[0], item[1]
+        st.markdown(
+            '<div class="pc" style="margin-bottom:8px">'
+            '<div style="font-size:11px;font-weight:700;color:#E6EDF3;margin-bottom:5px">▸ '+title+'</div>'
+            '<div style="font-size:11px;color:#8B949E;line-height:1.6">'+txt+'</div></div>',
+            unsafe_allow_html=True)
 
 # ═══ CHARTS ═══
 _CL=dict(paper_bgcolor=CARD,plot_bgcolor=CARD,font=dict(color=TX,family="monospace",size=11),
@@ -208,14 +321,18 @@ def ticker_bar(data):
         '.lme-rf{margin-left:auto;display:flex;flex-direction:column;justify-content:center;padding-left:20px;border-left:1px solid #1C2333}'
         '.lme-ld{display:inline-block;width:7px;height:7px;background:#00C853;border-radius:50%;margin-right:5px;vertical-align:middle;animation:lp 2s infinite}'
         '@keyframes lp{0%,100%{opacity:1}50%{opacity:0.3}}</style>')
+    labels={"cu":"COPPER &middot; USD/MT","al":"ALUMINIUM &middot; USD/MT",
+            "br":"BRENT &middot; USD/BBL","ag":"SILVER &middot; USD/OZ"}
+    blocks=""
+    for key in ["cu","al","br","ag"]:
+        if key+"_m" in data:
+            blocks+=blk(labels[key],data[key+"_m"],CLR[key])
+
     body=('<div class="lme-wrap"><div class="lme-top"><div>'
         '<div class="lme-logo">LME<span style="color:#B87333">.</span></div>'
         '<div style="font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;margin-top:1px">Commodities Terminal</div>'
         '</div><div style="font-size:10px;color:#484F58;letter-spacing:1px">DAILY SETTLEMENT</div></div><div class="lme-bar">'
-        +blk("COPPER &middot; USD/MT",data["cu_m"],CLR["cu"])
-        +blk("ALUMINIUM &middot; USD/MT",data["al_m"],CLR["al"])
-        +blk("BRENT &middot; USD/BBL",data["br_m"],CLR["br"])
-        +blk("SILVER &middot; USD/OZ",data["ag_m"],CLR["ag"])
+        +blocks
         +'<div class="lme-rf"><span style="font-size:9px;color:#484F58;letter-spacing:1.5px;text-transform:uppercase">'
         '<span class="lme-ld"></span>Live</span>'
         '<span style="font-size:12px;color:#8B949E;margin-top:2px">'+now+'</span>'
@@ -385,11 +502,12 @@ def build_pptx(mdata,qdata,sel):
         if mf.empty:return df.tail(4)
         r=df[(df["Date"]>=mf["Date"].min())&(df["Date"]<=mf["Date"].max())];return r if not r.empty else df.tail(4)
     prs=Presentation();prs.slide_width=Inches(10);prs.slide_height=Inches(5.625)
-    for key in ["cu","al","br","ag"]:
+    keys=[k for k in ["cu","al","br","ag"] if k in mdata]
+    for key in keys:
         mf=f(mdata[key]);qf=fq(qdata[key],mf)
         _sl(prs,NAMES[key]+" — Monthly Average",UNITS[key]+" · "+mf["Label"].iloc[0]+" → "+mf["Label"].iloc[-1],
             mpl_monthly(mf,NAMES[key],CLR[key]),_kd(mf),CLR[key])
-    for key in ["cu","al","br","ag"]:
+    for key in keys:
         mf=f(mdata[key]);qf=fq(qdata[key],mf);kp=_kd(mf)
         if len(qf):kp["l1"]=f"QTR ({qf['Label'].iloc[-1]})";kp["v1"]=f"${qf['Price'].iloc[-1]:,.0f}"
         _sl(prs,NAMES[key]+" — Quarterly Average",
@@ -400,25 +518,58 @@ def build_pptx(mdata,qdata,sel):
 # ═══ MAIN ═══
 def main():
     with st.spinner(""):
-        raw={k:load(v) for k,v in SHEETS.items()}
+        raw_all={k:load(v) for k,v in SHEETS.items()}
+
     for k in ["cu","al"]:
-        if raw[k].empty: st.error("No data for "+k);return
-    for k in ["br","ag"]:
-        if raw[k].empty: raw[k]=_syn(SHEETS[k])
+        if raw_all[k].empty:
+            st.error("No data for "+NAMES[k]+" — check Google Sheets connection."); return
 
-    M={k:mavg(raw[k]) for k in raw}; Q={k:qavg(raw[k]) for k in raw}
-    data={"cu_m":M["cu"],"al_m":M["al"],"br_m":M["br"],"ag_m":M["ag"]}
-    ticker_bar(data)
+    # Only keep commodities that have REAL data (no synthetic fallback)
+    raw_full = {k: v for k, v in raw_all.items() if not v.empty}
+    active = list(raw_full.keys())
+    missing = [k for k in SHEETS if k not in active]
 
-    # sidebar
+    global_min = min(raw_full[k]["Date"].min() for k in active)
+    global_max = max(raw_full[k]["Date"].max() for k in active)
+
     with st.sidebar:
         st.markdown('<div style="padding:10px 0"><div style="font-size:24px;font-weight:900;color:#FFF;letter-spacing:3px;font-family:Arial Black,sans-serif;line-height:1">'
             'LME<span style="color:#B87333">.</span></div>'
             '<div style="font-size:9px;color:#8B949E;letter-spacing:2px;text-transform:uppercase;margin-top:3px">Commodities Terminal</div></div>'
             '<div style="height:2px;background:linear-gradient(90deg,#B87333,transparent);margin-bottom:14px"></div>',unsafe_allow_html=True)
+
+        st.markdown('<div style="font-size:10px;color:#8B949E;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Date Range</div>',unsafe_allow_html=True)
+        preset = st.radio("Range", ["All","YTD","6M","3M","1M","Custom"], horizontal=True, label_visibility="collapsed")
+        today = global_max
+        if preset == "All":   start_d, end_d = global_min.date(), global_max.date()
+        elif preset == "YTD": start_d, end_d = datetime(today.year,1,1).date(), today.date()
+        elif preset == "6M":  start_d, end_d = (today - pd.DateOffset(months=6)).date(), today.date()
+        elif preset == "3M":  start_d, end_d = (today - pd.DateOffset(months=3)).date(), today.date()
+        elif preset == "1M":  start_d, end_d = (today - pd.DateOffset(months=1)).date(), today.date()
+        else:
+            c1c,c2c = st.columns(2)
+            with c1c: start_d = st.date_input("From", value=global_min.date(), min_value=global_min.date(), max_value=global_max.date(), label_visibility="collapsed")
+            with c2c: end_d   = st.date_input("To", value=global_max.date(), min_value=global_min.date(), max_value=global_max.date(), label_visibility="collapsed")
+        st.caption(f"{start_d:%d %b %Y} → {end_d:%d %b %Y}")
+        st.markdown('<div style="height:1px;background:#30363D;margin:12px 0"></div>',unsafe_allow_html=True)
+
+    sd = pd.Timestamp(start_d); ed = pd.Timestamp(end_d)
+    raw = {k: v[(v["Date"]>=sd)&(v["Date"]<=ed)].reset_index(drop=True) for k,v in raw_full.items()}
+    raw = {k: (v if len(v)>=2 else raw_full[k]) for k,v in raw.items()}
+
+    M={k:mavg(raw[k]) for k in active}; Q={k:qavg(raw[k]) for k in active}
+
+    data={k+"_m":M[k] for k in active}
+    ticker_bar(data)
+
+    if missing:
+        names = ", ".join(NAMES[k] for k in missing)
+        st.warning("No data yet for: "+names+". These Google Sheets are empty — populate them to see live charts. (No fake data is shown.)")
+
+    with st.sidebar:
         all_m=sorted(set(sum([M[k]["Label"].tolist() for k in M],[])),key=lambda x:datetime.strptime(x,"%b-%y"))
         sel=st.multiselect("Export Months",all_m,default=all_m[-10:] if len(all_m)>=10 else all_m)
-        st.caption("8 slides: 4 monthly + 4 quarterly")
+        st.caption(f"{len(active)*2} slides: {len(active)} monthly + {len(active)} quarterly")
         if st.button("⬇ Generate PPTX",type="primary"):
             if not sel:st.warning("Select months.")
             else:
@@ -431,20 +582,26 @@ def main():
         inr=get_usd_inr()
         st.markdown('<div style="border-top:1px solid #30363D;margin-top:14px;padding-top:10px;font-size:10px;color:#484F58">'
             '<b style="color:#8B949E">USD/INR</b><br><span style="font-size:18px;color:#FFD600;font-weight:700">₹'+f'{inr:.2f}'+'</span></div>',unsafe_allow_html=True)
+        short={"cu":"Cu","al":"Al","br":"Brent","ag":"Ag"}
         st.markdown('<div style="font-size:10px;color:#484F58;margin-top:8px"><b style="color:#8B949E">DATA</b><br>'
-            +'<br>'.join([k+': '+raw[v]["Date"].min().strftime("%d %b %y")+'→'+raw[v]["Date"].max().strftime("%d %b %y") for k,v in [("Cu","cu"),("Al","al"),("Brent","br"),("Ag","ag")]])
+            +'<br>'.join([short[k]+': '+raw[k]["Date"].min().strftime("%d %b %y")+'→'+raw[k]["Date"].max().strftime("%d %b %y") for k in active])
             +'</div>',unsafe_allow_html=True)
 
-    # tabs
-    tabs=st.tabs(["🟤 COPPER","⚙️ ALUMINIUM","🛢️ BRENT","🪙 SILVER","🌍 MARKET INTEL","📊 COMPARE","📋 DATA"])
+    tab_labels={"cu":"🟤 COPPER","al":"⚙️ ALUMINIUM","br":"🛢️ BRENT","ag":"🪙 SILVER"}
+    all_tab_names=[tab_labels[k] for k in active]+["🌍 MARKET INTEL","📊 COMPARE","📋 DATA"]
+    tabs=st.tabs(all_tab_names)
+    n=len(active)
+    intel_tab=tabs[n]; compare_tab=tabs[n+1]; data_tab=tabs[n+2]
 
-    # commodity tabs
-    for i,(key,tab) in enumerate(zip(["cu","al","br","ag"],[tabs[0],tabs[1],tabs[2],tabs[3]])):
-        with tab:
+    for idx,key in enumerate(active):
+        with tabs[idx]:
             c1,c2=st.columns([3.2,1])
             with c1:st.plotly_chart(chart_live(raw[key],NAMES[key],CLR[key],UNITS[key]),width="stretch",key=key+"_l")
             with c2:kpis(M[key],UNITS[key])
-            st.markdown('<div class="sh">QUARTERLY & ROLLING</div>',unsafe_allow_html=True)
+            # Data-driven insight banner (works for ALL commodities)
+            st.markdown('<div class="sh" style="margin-top:6px">📊 WHY IS THE PRICE MOVING? (AUTO-ANALYSIS)</div>',unsafe_allow_html=True)
+            render_data_insights(raw[key],UNITS[key])
+            st.markdown('<div class="sh" style="margin-top:10px">QUARTERLY & ROLLING</div>',unsafe_allow_html=True)
             r1,r2=st.columns(2)
             with r1:st.plotly_chart(chart_q(Q[key],lfc(Q[key],2),NAMES[key],CLR[key]),width="stretch",key=key+"_q")
             with r2:st.plotly_chart(chart_roll(raw[key],NAMES[key],CLR[key]),width="stretch",key=key+"_r")
@@ -452,10 +609,18 @@ def main():
             tbl(M[key])
 
     # MARKET INTEL
-    with tabs[4]:
-        sel_c=st.selectbox("Commodity",["Copper","Aluminium","Brent Oil","Silver"],label_visibility="collapsed")
+    INTEL_MAP={"cu":"Copper","al":"Aluminium","br":"Brent Oil","ag":"Silver"}
+    INTEL_REV={v:k for k,v in INTEL_MAP.items()}
+    with intel_tab:
+        intel_options=[INTEL_MAP[k] for k in active]
+        sel_c=st.selectbox("Commodity",intel_options,label_visibility="collapsed")
+        sel_key=INTEL_REV[sel_c]
 
-        st.markdown('<div class="sh">TOP 5 PRODUCING COUNTRIES</div>',unsafe_allow_html=True)
+        # Data-driven auto analysis first (works for every commodity)
+        st.markdown('<div class="sh">📊 AUTO-ANALYSIS — WHY THE PRICE IS MOVING</div>',unsafe_allow_html=True)
+        render_data_insights(raw[sel_key],UNITS[sel_key])
+
+        st.markdown('<div class="sh" style="margin-top:16px">TOP 5 PRODUCING COUNTRIES</div>',unsafe_allow_html=True)
         render_top5(sel_c)
 
         i1,i2=st.columns(2)
@@ -466,40 +631,41 @@ def main():
             st.markdown('<div class="sh" style="margin-top:14px">LATEST NEWS</div>',unsafe_allow_html=True)
             render_news(sel_c)
 
-        st.markdown('<div class="sh" style="margin-top:16px">📅 KEY EVENTS CALENDAR</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sh" style="margin-top:16px">KEY EVENTS CALENDAR</div>',unsafe_allow_html=True)
         render_events()
 
         # VOLATILITY
-        st.markdown('<div class="sh" style="margin-top:16px">🔥 30-DAY VOLATILITY</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sh" style="margin-top:16px">30-DAY VOLATILITY</div>',unsafe_allow_html=True)
         fig_v=go.Figure()
-        for key in ["cu","al","br","ag"]:
+        for key in active:
             d=raw[key].copy().sort_values("Date"); d["vol"]=d["Price"].pct_change().rolling(30).std()*100
             fig_v.add_trace(go.Scatter(x=d["Date"],y=d["vol"],line=dict(color=CLR[key],width=1.5),name=NAMES[key],mode="lines"))
         fig_v.update_layout(**_CL,title=dict(text="<b>30-Day Rolling Volatility</b> <span style='color:#8B949E;font-size:11px'>Daily % std dev</span>",font=dict(size=14)),height=300)
         st.plotly_chart(fig_v,width="stretch",key="vol")
 
-        # CORRELATION
-        st.markdown('<div class="sh" style="margin-top:12px">📐 CORRELATION MATRIX</div>',unsafe_allow_html=True)
-        merged=pd.DataFrame({"Date":raw["cu"]["Date"]})
-        for key in ["cu","al","br","ag"]:
-            d=raw[key][["Date","Price"]].rename(columns={"Price":NAMES[key]})
-            merged=pd.merge(merged,d,on="Date",how="inner")
-        if len(merged)>10:
-            corr=merged.drop(columns="Date").corr()
-            fig_c=go.Figure(data=go.Heatmap(z=corr.values,x=corr.columns,y=corr.columns,
-                colorscale=[[0,"#FF1744"],[0.5,"#161B22"],[1,"#00C853"]],zmin=-1,zmax=1,
-                text=[[f"{v:.2f}" for v in row] for row in corr.values],texttemplate="%{text}",
-                textfont=dict(size=13,color="#E6EDF3")))
-            fig_c.update_layout(paper_bgcolor=CARD,plot_bgcolor=CARD,font=dict(color=TX,size=11),
-                margin=dict(l=10,r=10,t=40,b=10),height=320,
-                title=dict(text="<b>Price Correlation</b>",font=dict(size=14,color=TX)))
-            st.plotly_chart(fig_c,width="stretch",key="corr")
+        # CORRELATION (needs 2+ commodities)
+        if len(active)>=2:
+            st.markdown('<div class="sh" style="margin-top:12px">CORRELATION MATRIX</div>',unsafe_allow_html=True)
+            merged=raw[active[0]][["Date"]].copy()
+            for key in active:
+                d=raw[key][["Date","Price"]].rename(columns={"Price":NAMES[key]})
+                merged=pd.merge(merged,d,on="Date",how="inner")
+            if len(merged)>10:
+                corr=merged.drop(columns="Date").corr()
+                fig_c=go.Figure(data=go.Heatmap(z=corr.values,x=corr.columns,y=corr.columns,
+                    colorscale=[[0,"#FF1744"],[0.5,"#161B22"],[1,"#00C853"]],zmin=-1,zmax=1,
+                    text=[[f"{v:.2f}" for v in row] for row in corr.values],texttemplate="%{text}",
+                    textfont=dict(size=13,color="#E6EDF3")))
+                fig_c.update_layout(paper_bgcolor=CARD,plot_bgcolor=CARD,font=dict(color=TX,size=11),
+                    margin=dict(l=10,r=10,t=40,b=10),height=320,
+                    title=dict(text="<b>Price Correlation</b>",font=dict(size=14,color=TX)))
+                st.plotly_chart(fig_c,width="stretch",key="corr")
 
         # INR LANDED COST
-        st.markdown('<div class="sh" style="margin-top:12px">💱 INR LANDED COST</div>',unsafe_allow_html=True)
+        st.markdown('<div class="sh" style="margin-top:12px">INR LANDED COST</div>',unsafe_allow_html=True)
         inr=get_usd_inr()
-        cols=st.columns(4)
-        for i,(key,col) in enumerate(zip(["cu","al","br","ag"],cols)):
+        cols=st.columns(len(active))
+        for col,key in zip(cols,active):
             cur=M[key]["Price"].iloc[-1]; inr_val=cur*inr
             with col:
                 st.markdown(
@@ -510,10 +676,10 @@ def main():
                     '</div>',unsafe_allow_html=True)
 
     # COMPARE
-    with tabs[5]:
+    with compare_tab:
         st.markdown('<div class="sh">INDEXED PERFORMANCE (Base=100)</div>',unsafe_allow_html=True)
         fig=go.Figure()
-        for key in ["cu","al","br","ag"]:
+        for key in active:
             d=M[key].copy();d["I"]=d["Price"]/d["Price"].iloc[0]*100
             fig.add_trace(go.Scatter(x=d["Date"],y=d["I"],line=dict(color=CLR[key],width=2),name=NAMES[key]))
         fig.add_hline(y=100,line_dash="dot",line_color=MT,line_width=1)
@@ -521,9 +687,9 @@ def main():
         st.plotly_chart(fig,width="stretch",key="comp")
 
     # DATA
-    with tabs[6]:
-        cols=st.columns(4)
-        for i,(key,col) in enumerate(zip(["cu","al","br","ag"],cols)):
+    with data_tab:
+        cols=st.columns(len(active))
+        for col,key in zip(cols,active):
             with col:
                 st.markdown('<div class="sh">'+NAMES[key]+'</div>',unsafe_allow_html=True)
                 dp=raw[key][["Date","Price"]].copy();dp["Date"]=dp["Date"].dt.strftime("%d %b %Y");dp["Price"]=dp["Price"].apply(lambda x:f"${x:,.2f}")
